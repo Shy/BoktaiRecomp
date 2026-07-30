@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────
+# User-provided cartridge ROMs and BIOS (copyrighted; never commit).
+# ─────────────────────────────────────────────────────────────────────
+variants/*/roms/
+*.gba
+*.GBA
+*.agb
+gba_bios.bin
+
+# Save files and save states
+saves/
+*.sav
+*.srm
+*.state[0-9]
+
+# ─────────────────────────────────────────────────────────────────────
+# Generated code (derivative of a copyrighted ROM; regenerate locally).
+# ../gbarecomp/CLAUDE.md "Generated C is never edited" applies here. The
+# README stays tracked so each variant's generated/ dir exists in a fresh
+# clone -- CMake fails with a clear message when it is empty.
+# ─────────────────────────────────────────────────────────────────────
+variants/*/generated/*.c
+variants/*/generated/*.cpp
+variants/*/generated/*.h
+variants/*/generated/*.json
+
+# Build output
+build/
+build-*/
+release-stage/
+*.o
+*.obj
+*.pdb
+*.exe
+*.dll
+*.dSYM/
+
+# Self-heal overlay cache (per-ROM, machine-specific)
+recomp_cache/
+
+# Runtime-written reports and player-owned settings
+recomp_coverage_*.json
+recomp_master_misses*.toml.frag
+recomp_seed_proposals.toml
+config.ini
+keybinds.ini
+bios.cfg
+rom.cfg
+*.log
+hang_trace.csv
+
+# Flatpak build dirs
+.flatpak-builder/
+flatpak-build/
+
+# macOS
+.DS_Store
