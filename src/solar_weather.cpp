@@ -25,7 +25,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
-#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -64,7 +63,7 @@ std::string             g_config_dir = ".";
 constexpr double kGaugeFullBrightness = 159.0;
 
 // Manual steps, shaped from that same measurement rather than evenly spread.
-// Index 0..8 lines up with the engine's number-row debug keys 1..9.
+// Index 0..8 is the range the engine's SolarBrighter/SolarDimmer hotkeys step.
 constexpr unsigned kManualSteps[9] = {0, 8, 16, 24, 31, 63, 95, 127, 159};
 
 std::uint8_t irradiance_to_brightness(double ghi, double full_sun) {
@@ -289,7 +288,7 @@ void poll_loop() {
                 if (!warned_geocode) {
                     warned_geocode = true;
                     std::printf("solar_weather: geocoding %s %s failed; "
-                                "retrying (menu and keys 1-9 still work)\n",
+                                "retrying (the in-game menu still works)\n",
                                 country.c_str(), zip.c_str());
                     std::fflush(stdout);
                 }
@@ -396,7 +395,7 @@ bool solar_weather_start(const SolarWeatherConfig& cfg) {
 
 #if !defined(BOKTAI_HAVE_CURL)
     std::printf("solar_weather: built without libcurl, so a postal code "
-                "cannot be honored; use the menu's Manual mode or keys 1-9\n");
+                "cannot be honored; use the in-game menu's Manual mode\n");
     std::fflush(stdout);
     return false;
 #else
@@ -414,10 +413,6 @@ std::uint8_t solar_weather_brightness() {
     }
     return static_cast<std::uint8_t>(
         g_weather_brightness.load(std::memory_order_relaxed));
-}
-
-bool solar_weather_has_sample() {
-    return g_have_sample.load(std::memory_order_relaxed);
 }
 
 void solar_set_source(SolarSource src) {

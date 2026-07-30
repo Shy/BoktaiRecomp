@@ -6,7 +6,8 @@
 // RunOptions::solar_provider: engine owns the mechanism, game owns the policy.
 //
 // Everything here is reachable without knowing a single keystroke, which is the
-// point — the number-row debug keys remain a shortcut, not the only way in.
+// point — the solar hotkeys remain a shortcut, not the only way in, and they
+// are unbound by default.
 
 #ifndef BOKTAI_GAME_UI_H
 #define BOKTAI_GAME_UI_H

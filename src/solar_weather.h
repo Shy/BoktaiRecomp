@@ -25,8 +25,8 @@
 // other data. With no zipcode configured nothing is sent and no thread runs.
 //
 // Requires libcurl. Without it the translation unit still compiles and
-// solar_weather_start() reports unavailable, so the debug keys remain the
-// light source.
+// solar_weather_start() reports unavailable, leaving the in-game menu's Manual
+// mode as the light source.
 
 #ifndef BOKTAI_SOLAR_WEATHER_H
 #define BOKTAI_SOLAR_WEATHER_H
@@ -78,8 +78,8 @@ enum class SolarSource {
 void        solar_set_source(SolarSource src);
 SolarSource solar_source();
 
-// Manual level on the same 0..8 scale the number-row keys use, mapped through
-// the measured gauge response rather than spread evenly over 0..255.
+// Manual level on the same 0..8 scale the solar hotkeys step, mapped through the
+// measured gauge response rather than spread evenly over 0..255.
 void solar_set_manual_step(int step);   // clamped 0..8
 int  solar_manual_step();
 
@@ -131,9 +131,6 @@ std::uint8_t solar_weather_brightness();
 
 // Joins the polling thread. Idempotent.
 void solar_weather_stop();
-
-// True once at least one poll has succeeded. For startup logging only.
-bool solar_weather_has_sample();
 
 }  // namespace boktai
 

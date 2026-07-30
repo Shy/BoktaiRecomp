@@ -51,6 +51,6 @@ they drive Boktai somewhere it was never going to survive. Not obviously a bug i
 the tracks so much as them being applied to the wrong game.
 
 Practical effect: there is no scripted way to reach Boktai gameplay headlessly,
-which blocks automated characterization of anything that only shows up in-game
-(the 16:10 margins, for one). The alternatives are driving `KEYINPUT` over the
-debug server's `run_frames`, or committing a save state.
+which blocks automated characterization of anything that only shows up in-game.
+The alternatives are driving `KEYINPUT` over the debug server's `run_frames`, or
+committing a save state.

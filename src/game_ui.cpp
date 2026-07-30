@@ -15,7 +15,6 @@
 #include "game_ui.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 #include "solar_weather.h"
@@ -229,7 +228,8 @@ RecompRuntimeUiItem kItems[] = {
     },
     {
         kKeyManualStep, "Solar sensor", "Manual level",
-        "0 is darkness, 8 is full sun. Matches the number-row keys 1-9.",
+        "0 is darkness, 8 is full sun. Same scale the SolarBrighter and "
+        "SolarDimmer hotkeys step.",
         RECOMP_RUNTIME_UI_INT,
         0, 8, 1, nullptr, 0, nullptr,
     },

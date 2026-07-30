@@ -30,7 +30,6 @@
 
 #include "game_ui.h"
 #include "runtime.h"
-#include "runtime_arm.h"
 #include "solar_weather.h"
 
 #ifndef GBARECOMP_BUILTIN_NAME
@@ -76,7 +75,9 @@ void print_usage() {
         "  --solar-verbose         log every reading\n"
         "Each has a BOKTAI_SOLAR_* environment equivalent (ZIP, COUNTRY,\n"
         "FULL_SUN, POLL, VERBOSE). Without a postal code no network request\n"
-        "is ever made; keys 1-9 set light by hand and 0 returns to live data.\n"
+        "is ever made. To set light by hand instead, bind SolarBrighter /\n"
+        "SolarDimmer / SolarLive in the launcher's Hotkeys panel -- they are\n"
+        "unbound by default -- or use the in-game menu (Esc).\n"
         "\n"
         "Default game config: " GBARECOMP_DEFAULT_GAME_CONFIG " (relative to CWD)\n",
         GBARECOMP_WINDOW_TITLE);
@@ -186,19 +187,6 @@ int main(int argc, char** argv) {
     opts.has_solar_sensor = true;
     opts.solar_provider   = &boktai::solar_weather_brightness;
 
-    // ---- 16:10 extended view (EXPERIMENTAL) ---------------------------------
-    // 256x160 is not an arbitrary width: 256/160 is exactly 16:10, and 256x160
-    // at integer scale 5 is 1280x800 -- the Steam Deck panel, pixel-perfect with
-    // no letterboxing. Native 240x160 can only reach 1200x800 at 5x, leaving
-    // 40px bars each side.
-    //
-    // Authorizing the width only makes the PPU render 8 extra columns per side;
-    // it does not make the GAME aware of them. Nothing is patched yet, so expect
-    // artifacts in the margins (see docs/WIDESCREEN.md). Left opt-in and OFF in
-    // the launcher until those are characterized.
-    opts.max_view_width = 256;
-    opts.widescreen_view_width = 256;
-    opts.launcher_expose_widescreen = false;   // not ready to advertise
     boktai::game_ui_install(opts);   // solar section in the in-game menu
 
 #if defined(RECOMP_LAUNCHER)
@@ -209,7 +197,7 @@ int main(int argc, char** argv) {
 #endif
 
     // CLI beats the persisted setting; an unset code leaves the sensor on the
-    // number-row keys and makes no network request at all.
+    // solar hotkeys and makes no network request at all.
     boktai::SolarWeatherConfig cfg = solar_cfg;
     if (cfg.zipcode.empty()) boktai::solar_config_load(&cfg);
     boktai::solar_weather_start(cfg);
