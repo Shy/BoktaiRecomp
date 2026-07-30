@@ -5,10 +5,11 @@
 # copyrighted ROM, so they are gitignored and regenerated locally. CI has no ROM
 # and never will. What it *can* do is prove the tree configures, compiles and
 # passes the engine's suites on all three platforms, which is where portability
-# regressions actually show up (this project has already hit Windows-only
-# absolute paths, a PE-only linker flag, and a stubbed loader).
+# regressions actually show up — this project has already hit a Windows-only
+# absolute path, a PE-only linker flag, a stubbed loader, a `_start` symbol that
+# collides with glibc, and a link group gated on the wrong condition.
 #
-# Release packaging is therefore a local step — see docs/PACKAGING.md.
+# Release packaging is a separate workflow (release.yml) and needs a ROM.
 
 name: CI
 
@@ -19,36 +20,80 @@ on:
   workflow_dispatch:
 
 jobs:
-  engine:
+  # Unix (macOS + Linux). Kept separate from Windows because the Windows job has
+  # to run every step inside an MSYS2 shell, and `shell:` does not accept an
+  # expression — GitHub rejects the whole workflow file if you try.
+  engine-unix:
     name: engine + tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04, windows-2022]
+        os: [macos-14, ubuntu-24.04]
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install SDL2 (macOS)
+      - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install sdl2 ninja
 
-      - name: Install SDL2 (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev ninja-build libcurl4-openssl-dev
 
-      # MSVC is not a supported toolchain for this engine: bios_hle.cpp uses
-      # __builtin_clz, which MSVC does not provide, so a stock windows-2022 image
-      # fails to compile it. Upstream builds with MSYS2 MinGW, so CI matches that
-      # rather than testing a configuration nobody supports.
-      - name: Set up MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+      # The engine holds the real test coverage and is ROM-independent.
+      - name: Configure engine
+        working-directory: gbarecomp
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build engine
+        working-directory: gbarecomp
+        run: cmake --build build --parallel
+
+      # oracle needs a vendored mGBA checkout; bios_intro_flawless needs a BIOS.
+      # Both are excluded explicitly rather than left to fail.
+      - name: Test engine
+        working-directory: gbarecomp
+        run: ctest --test-dir build -E "oracle|bios_intro_flawless" --output-on-failure
+
+      # Compiles this repo's own non-generated sources against the engine
+      # headers. Catches the class of break that only appears when the submodule
+      # moves, without needing a ROM.
+      - name: Compile game sources (no ROM)
+        run: |
+          set -euo pipefail
+          INC="-Igbarecomp/src/runtime -Igbarecomp/src/gba -Igbarecomp/src/armv4t"
+          INC="$INC -Isrc -Irecomp-ui/src -Irecomp-ui/src/common"
+          for f in src/solar_weather.cpp src/game_ui.cpp; do
+            echo "--- $f"
+            c++ -std=c++20 -fsyntax-only $INC \
+                -DGBARECOMP_RUNTIME_UI=1 -DRECOMP_RUNTIME_UI_HAS_TEXT=1 "$f"
+          done
+
+  # Windows builds with MSYS2 MinGW, not MSVC. bios_hle.cpp uses __builtin_clz,
+  # which MSVC does not provide ("error C3861: '__builtin_clz': identifier not
+  # found"), so a stock windows-2022 image tests a toolchain the engine does not
+  # support. Upstream builds with MSYS2, so CI matches that.
+  engine-windows:
+    name: engine + tests (windows, mingw64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      # checkout must NOT use the msys2 shell (the action runs node, not a shell,
+      # but its post-step cleanup is happier with the default).
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: false
@@ -59,38 +104,17 @@ jobs:
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-curl
 
-      # The engine is the part with real test coverage, and it is ROM-independent.
       - name: Configure engine
         working-directory: gbarecomp
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build engine
         working-directory: gbarecomp
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: cmake --build build --parallel
 
-      # oracle needs a vendored mGBA checkout; bios_intro_flawless needs a BIOS.
-      # Both are excluded rather than silently failing.
       - name: Test engine
         working-directory: gbarecomp
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: ctest --test-dir build -E "oracle|bios_intro_flawless" --output-on-failure
-
-      # Compiles this repo's own non-generated sources (solar_weather, game_ui,
-      # main) against the engine headers. Catches the class of break that only
-      # shows up when the submodule moves, without needing a ROM.
-      - name: Compile game sources (no ROM)
-        shell: bash
-        run: |
-          set -euo pipefail
-          INC="-Igbarecomp/src/runtime -Igbarecomp/src/gba -Isrc"
-          INC="$INC -Irecomp-ui/src -Irecomp-ui/src/common"
-          for f in src/solar_weather.cpp src/game_ui.cpp; do
-            echo "--- $f"
-            c++ -std=c++20 -fsyntax-only $INC \
-                -DGBARECOMP_RUNTIME_UI=1 -DRECOMP_RUNTIME_UI_HAS_TEXT=1 "$f"
-          done
 
   packaging:
     name: packaging scripts
@@ -102,7 +126,9 @@ jobs:
 
       - name: Shell syntax
         run: |
+          set -euo pipefail
           for s in gbarecomp/packaging/package_macos.sh \
+                   gbarecomp/packaging/package_linux.sh \
                    gbarecomp/packaging/flatpak/build_flatpak.sh; do
             bash -n "$s" && echo "ok: $s"
           done
@@ -111,13 +137,31 @@ jobs:
       # it needs the recompiled sources.
       - name: Flatpak manifest generates and is valid YAML
         run: |
+          set -euo pipefail
           gbarecomp/packaging/flatpak/build_flatpak.sh \
             --target BoktaiRecomp --name Boktai \
             --id tech.recomp.BoktaiRecomp --generate-only
           python3 -c "
-          import yaml, sys
+          import yaml
           m = yaml.safe_load(open('flatpak-build/tech.recomp.BoktaiRecomp.yml'))
           assert m['command'] == 'BoktaiRecomp', m['command']
           assert m['id'] == 'tech.recomp.BoktaiRecomp', m['id']
-          print('manifest OK:', [x['name'] for x in m['modules']])
+          mods = [x['name'] for x in m['modules']]
+          assert 'BoktaiRecomp' in mods, mods
+          print('manifest OK:', mods)
+          "
+
+      # The skip list is what keeps the cartridge and BIOS out of the build
+      # sandbox, so assert it is actually populated rather than silently empty.
+      - name: Manifest excludes ROM and BIOS paths
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import yaml
+          m = yaml.safe_load(open('flatpak-build/tech.recomp.BoktaiRecomp.yml'))
+          src = [s for s in m['modules'][-1]['sources'] if s.get('type') == 'dir'][0]
+          skip = src.get('skip', [])
+          assert any('roms' in s for s in skip), skip
+          assert any('bios' in s for s in skip), skip
+          print('skip list:', skip)
           "
