@@ -42,23 +42,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev ninja-build libcurl4-openssl-dev
 
-      - name: Install SDL2 (Windows)
+      # MSVC is not a supported toolchain for this engine: bios_hle.cpp uses
+      # __builtin_clz, which MSVC does not provide, so a stock windows-2022 image
+      # fails to compile it. Upstream builds with MSYS2 MinGW, so CI matches that
+      # rather than testing a configuration nobody supports.
+      - name: Set up MSYS2 (Windows)
         if: runner.os == 'Windows'
-        run: vcpkg install sdl2:x64-windows curl:x64-windows
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-curl
 
       # The engine is the part with real test coverage, and it is ROM-independent.
       - name: Configure engine
         working-directory: gbarecomp
-        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build engine
         working-directory: gbarecomp
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: cmake --build build --parallel
 
       # oracle needs a vendored mGBA checkout; bios_intro_flawless needs a BIOS.
       # Both are excluded rather than silently failing.
       - name: Test engine
         working-directory: gbarecomp
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: ctest --test-dir build -E "oracle|bios_intro_flawless" --output-on-failure
 
       # Compiles this repo's own non-generated sources (solar_weather, game_ui,
