@@ -152,16 +152,28 @@ jobs:
           "
 
       # The skip list is what keeps the cartridge and BIOS out of the build
-      # sandbox, so assert it is actually populated rather than silently empty.
-      - name: Manifest excludes ROM and BIOS paths
+      # sandbox, so test the MECHANISM rather than asserting specific paths: CI
+      # has no ROM or BIOS (both gitignored), so a real checkout legitimately
+      # produces a skip list with neither in it. Plant decoys, regenerate, and
+      # assert they were excluded.
+      - name: Skip list actually excludes a ROM and BIOS when present
         run: |
           set -euo pipefail
+          mkdir -p variants/boktai1_usa/roms
+          : > variants/boktai1_usa/roms/decoy.gba
+          : > gbarecomp/bios/gba_bios.bin
+          gbarecomp/packaging/flatpak/build_flatpak.sh \
+            --target BoktaiRecomp --name Boktai \
+            --id tech.recomp.BoktaiRecomp --generate-only
           python3 -c "
           import yaml
           m = yaml.safe_load(open('flatpak-build/tech.recomp.BoktaiRecomp.yml'))
           src = [s for s in m['modules'][-1]['sources'] if s.get('type') == 'dir'][0]
           skip = src.get('skip', [])
-          assert any('roms' in s for s in skip), skip
-          assert any('bios' in s for s in skip), skip
           print('skip list:', skip)
+          assert any(s.endswith('roms') for s in skip), 'roms dir not skipped'
+          assert any('gba_bios.bin' in s for s in skip), 'BIOS not skipped'
+          assert any('decoy.gba' in s for s in skip), 'ROM file not skipped'
+          print('decoy ROM and BIOS are both excluded from the build sandbox')
           "
+          rm -rf variants/boktai1_usa/roms gbarecomp/bios/gba_bios.bin
