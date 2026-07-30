@@ -96,10 +96,29 @@ The engine reports the split as expected:
 extended view ON: requested=256x160 effective=256x160 margins=8/8
 ```
 
-**Margin content is not yet characterized.** The first comparison landed on a
-frame that is 100% white in both views (the transition after the BIOS logo), so it
-carried no information. Needs a frame with real content — title screen or
-gameplay — before any claim about artifacts.
+**The margins do NOT fill themselves.** On a logo/title screen with real content
+(51 distinct colours) the 8-column margins render as flat near-black while the
+adjacent interior is the scene:
+
+| Band | Colour |
+|---|---|
+| left margin `x=0..7` | `(24,24,24)` |
+| left interior `x=8..15` | `(0,148,222)` |
+| right interior `x=240..247` | `(0,148,222)` |
+| right margin `x=248..255` | `(24,24,24)` |
+
+So the hopeful theory above — that a 256-wide hardware BG map would already have
+valid tiles at x = 240…255 — **does not hold for this screen**. The margins fall
+back to the backdrop instead of continuing the picture.
+
+The one consolation is that they are *empty*, not *corrupt*: the result reads as a
+slightly wider letterbox rather than garbage, so nothing looks broken. But 16:10
+is not free, and getting real content into those columns needs game-side work.
+
+**Still unmeasured: gameplay.** A scrolling gameplay tilemap may behave differently
+from this screen, which looks like a windowed backdrop. Reaching gameplay headlessly
+is currently blocked — see the demo-input crash in [ISSUES.md](../ISSUES.md) — and
+no save state exists to jump straight in.
 
 ## Status
 

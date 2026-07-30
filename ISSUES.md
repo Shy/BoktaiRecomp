@@ -38,3 +38,19 @@ for exactly this and its docstring warns about the RTC trap.
 ## Audio
 
 Not systematically compared against hardware or the oracle.
+
+## `GBARECOMP_DEMO_INPUT=campaign` segfaults
+
+A headless run with `GBARECOMP_DEMO_INPUT=campaign` dies with SIGSEGV (exit 139)
+somewhere before frame 300. Reproduced at both `--view-width 240` and `256`, so it
+is unrelated to the extended view.
+
+The demo tracks are written for Mega Man Zero — the mode list mentions an
+"action-platformer stress track", a "saber handoff" and an opening "Golem" — so
+they drive Boktai somewhere it was never going to survive. Not obviously a bug in
+the tracks so much as them being applied to the wrong game.
+
+Practical effect: there is no scripted way to reach Boktai gameplay headlessly,
+which blocks automated characterization of anything that only shows up in-game
+(the 16:10 margins, for one). The alternatives are driving `KEYINPUT` over the
+debug server's `run_frames`, or committing a save state.
