@@ -1,6 +1,7 @@
 [submodule "gbarecomp"]
 	path = gbarecomp
-	url = https://github.com/mstan/gbarecomp.git
+	url = https://github.com/Shy/gbarecomp.git
+	branch = feat/portable-packaging
 [submodule "recomp-ui"]
 	path = recomp-ui
 	url = https://github.com/mstan/recomp-ui.git

@@ -61,6 +61,43 @@ Mirror MinishCapRecomp's `tools/package_release.ps1`: configure with
 link statically, build, then `strip`. That option is MSYS2-specific by design —
 it pins `libSDL2.a` from the MinGW prefix.
 
+## Automated builds
+
+`.github/workflows/release.yml` builds macOS and Linux packages and opens a
+**draft** GitHub Release.
+
+It cannot work from a clean clone, and that is not a bug: `variants/*/generated/`
+is derived from a copyrighted cartridge and is never committed, and a GitHub
+runner has no ROM. So the workflow fetches one from somewhere you control:
+
+| Secret | Purpose |
+|---|---|
+| `ROM_URL` | private URL for the cartridge dump |
+| `ROM_SHA1` | expected sha1, verified before anything is built |
+| `BIOS_URL` | private URL for the GBA BIOS |
+| `BIOS_SHA1` | expected sha1 |
+
+With `ROM_URL` unset the build jobs **skip** with an explanatory notice instead of
+failing, so a fork does not inherit a permanently red workflow it cannot fix.
+
+Triggered by pushing a `v*` tag, or manually via *Actions → Release → Run
+workflow*.
+
+Each job recompiles the BIOS and the cartridge, packages with the scripts above,
+then proves the artifact is real before uploading it:
+
+- runs the packaged binary for 60 frames against the ROM and asserts `rom_loaded`
+  and `ppu_frames=60` — a `--help` smoke test alone would not catch a package that
+  starts but cannot boot;
+- fails the job if any `*.gba` or `gba_bios.bin` ended up inside the artifact.
+
+The Release is created as a **draft** deliberately. The binaries embed translated
+ROM code, so publishing them is a decision, not a side effect of a green build.
+
+Windows is not in the matrix yet: its packaging path is MSYS2-specific
+(`GBARECOMP_STATIC_RELEASE` pins `libSDL2.a` from the MinGW prefix), so it needs a
+runner set up for that rather than the stock image.
+
 ## What is never packaged
 
 The ROM and the BIOS. A recompiled binary already embeds translated ROM code, so
