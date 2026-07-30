@@ -1,0 +1,29 @@
+# boktai1_usa.toml — region overrides for Boktai 1 USA.
+#
+# Layered on top of ../game.toml (config/<short_name>_<region>.toml =
+# config/boktai1_usa.toml). Consumed by the RUNTIME.
+#
+# NOTE: this is not the recompiler config. The gba_recompile --config file
+# (with [program] / [identity] / [[data_range]]) lives at
+# ../symbols/boktai1_usa_recompile.toml and uses a different schema
+# (see gbarecomp/docs/TOML_SCHEMA.md).
+#
+# Hashes verified 2026-07-28 against a CLEAN dump. The previous values were an
+# intro-patched ("cracked") image whose reset vector branched to a warez intro
+# loader at 0x08EDA900; see ../symbols/boktai1_usa_recompile.toml for the full
+# story. This dump's reset vector branches to 0x080000C0 as retail code should,
+# and mGBA reaches Boktai's solar-sensor tutorial screen with no intro.
+
+[rom]
+sha1  = "7164326283df46a3941ec7b6ceca889cbc40e660"
+md5   = "ff75c62ab690410cc8fca24204d783e9"
+crc32 = "0xE715AC45"
+
+[save]
+type = "eeprom"     # EEPROM_V signature at 0x584508
+size = "0x2000"     # 8 KB (64 Kbit)
+
+[quirks]
+# Boktai's cart has three peripherals on it: EEPROM save, Seiko S-3511A RTC
+# (SIIRTC_V at 0x58458C — engine auto-detects), and the solar sensor. The
+# sensor is the only one the engine does not model yet.

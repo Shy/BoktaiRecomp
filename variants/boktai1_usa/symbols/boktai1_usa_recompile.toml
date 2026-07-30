@@ -1,0 +1,1671 @@
+# boktai1_usa_recompile.toml — gba_recompile --config for Boktai 1 USA.
+#
+# Schema: gbarecomp/docs/TOML_SCHEMA.md. This file supplements the function
+# finder's automated walk. Entries are NOT validated for correctness — a wrong
+# [[extra_func]] address generates junk code, and a too-narrow [[data_range]]
+# lets the finder walk into literal pools.
+#
+# False-positive policy (load-bearing):
+#   Missing a function  -> a runtime_dispatch_miss naming the exact PC. Cheap.
+#   Data decoded as code -> junk C that may silently dispatch and corrupt
+#                           state, bypassing the oracle diff. Catastrophic.
+# So: lean conservative, and close gaps here deliberately.
+#
+# ── HISTORY: this file was rewritten 2026-07-28 ───────────────────────
+# The previous version was tuned against an INTRO-PATCHED ("cracked") dump and
+# almost none of it applied to the real game. That ROM had a warez intro loader
+# appended at 0x08EDA900 which the reset vector branched to; it DMA'd an
+# 840-byte unpacker into IWRAM at 0x03000000, which decompressed the intro to
+# 0x03003000+ and only then entered the game. Everything we had configured for
+# that — a [[code_copy]], crt0 [[extra_func]] seeds, and seven `resume = true`
+# interior points — described the crack, not Boktai, and is gone.
+#
+# Verified clean dump (2026-07-28):
+#   sha1 7164326283df46a3941ec7b6ceca889cbc40e660, 16 MiB
+#   reset vector branches to 0x080000C0, the conventional post-header entry
+#   (the patched ROM branched to 0x08EDA900, crt0 stranded at the ROM's end)
+#   mGBA reaches Boktai's solar-sensor tutorial screen with no mode-4 intro
+
+[program]
+name         = "Boktai - The Sun Is in Your Hand (USA)"
+id           = "boktai1_usa"
+load_address = 0x08000000
+size         = 0x01000000        # 16 MiB — must match the file on disk
+entry_pc     = 0x08000000        # ARM B -> 0x080000C0 -> B -> 0x080001A4
+
+[identity]
+sha1 = "7164326283df46a3941ec7b6ceca889cbc40e660"
+md5  = "ff75c62ab690410cc8fca24204d783e9"
+
+# ── Data ranges: hard-exclude bytes from being decoded as code ─────────
+#
+# The cartridge header. 0x08000000 itself IS code (the ARM branch), so the
+# exclusion starts at 0x08000004. 0x080000C0 stays code: it is the post-header
+# entry the reset vector targets, and it really does branch to 0x080001A4
+# (0xEA000037).
+[[data_range]]
+start = 0x08000004
+end   = 0x080000C0               # [start, end) — Nintendo logo + cart header
+note  = "Nintendo logo bytes + cartridge header fields, not code"
+
+# The cartridge GPIO window plus the zero padding after it, up to the real code
+# at 0x080001A4. Verified: all 224 bytes of 0x080000C4..0x080001A4 are 0x00.
+#
+# Two reasons this must be data:
+#   1. The finder would otherwise decode the zeros as instructions and fall
+#      through past the branch at 0x080000C0.
+#   2. On Boktai 0x080000C4 / C6 / C8 is the cartridge GPIO port (GBATEK:
+#      data / direction / control) carrying the Seiko S-3511A RTC and the solar
+#      sensor. GpioPort services those reads; they are never instructions.
+[[data_range]]
+start = 0x080000C4
+end   = 0x080001A4
+note  = "Cartridge GPIO window (RTC + solar sensor) + zero padding, not code"
+
+# ── Discovered entries ────────────────────────────────────────────────
+# Populate [[extra_func]] / [[jump_table]] / [[code_copy]] from
+# dispatch_misses.log as the interp-vs-static loop proceeds. Start empty: the
+# reset vector's branch chain is statically visible in this dump, so the finder
+# reaches the game without hand-holding. Do not add speculative addresses.
+
+# ── Interior re-entry points (resume aliases) ─────────────────────────
+#
+# Merged from a driven run's dispatch-miss log, per the project's DISPATCH MISS
+# RULE. Every one of the 120 misses in that run was an INTERIOR address of an
+# already-rooted function (reported "near gf_tfunc_XXXX+0xNNN"), and none was a
+# missing function entry — the finder locates entries correctly; this game
+# re-enters them by computed jump (switch dispatch and exception returns).
+#
+# `resume = true` is the documented shape: the address is rolled into its
+# containing function and emitted as a thin alias that jumps to that
+# instruction, instead of being treated as a new function entry.
+#
+# Why this matters beyond coverage: an interior miss with a non-empty call stack
+# takes stop_pc from the call-stack top, which belongs to an OUTER frame — so
+# the bridge never sees its stop and runs to the 200M-instruction cap:
+#   SELF-HEAL bridge for 0x081C68CE exceeded 200000000 instructions
+#   without returning to stop_pc=0x081D58DE
+# Covering these statically removes the runaway bridge rather than papering over
+# it. 51 distinct host functions; all THUMB.
+
+[[extra_func]]
+addr   = 0x08000344
+mode   = "thumb"
+resume = true
+note   = "interior +0x20 of gf_tfunc_08000324; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x080030D8
+mode   = "thumb"
+resume = true
+note   = "interior +0x2270 of gf_tfunc_08000E68; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08003124
+mode   = "thumb"
+resume = true
+note   = "interior +0x22BC of gf_tfunc_08000E68; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0800BE00
+mode   = "thumb"
+resume = true
+note   = "interior +0x1EFC of gf_tfunc_08009F04; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0800BEC0
+mode   = "thumb"
+resume = true
+note   = "interior +0x1FBC of gf_tfunc_08009F04; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0800DFD4
+mode   = "thumb"
+resume = true
+note   = "interior +0x40D0 of gf_tfunc_08009F04; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0800E090
+mode   = "thumb"
+resume = true
+note   = "interior +0x418C of gf_tfunc_08009F04; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08012B88
+mode   = "thumb"
+resume = true
+note   = "interior +0x84C of gf_tfunc_0801233C; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08012CA4
+mode   = "thumb"
+resume = true
+note   = "interior +0x968 of gf_tfunc_0801233C; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x080450FC
+mode   = "thumb"
+resume = true
+note   = "interior +0x368 of gf_tfunc_08044D94; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08045134
+mode   = "thumb"
+resume = true
+note   = "interior +0x3A0 of gf_tfunc_08044D94; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08056D40
+mode   = "thumb"
+resume = true
+note   = "interior +0x163C of gf_tfunc_08055704; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08056EFC
+mode   = "thumb"
+resume = true
+note   = "interior +0x17F8 of gf_tfunc_08055704; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08071D00
+mode   = "thumb"
+resume = true
+note   = "interior +0x1A7C of gf_tfunc_08070284; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08071D38
+mode   = "thumb"
+resume = true
+note   = "interior +0x1AB4 of gf_tfunc_08070284; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x080C41D8
+mode   = "thumb"
+resume = true
+note   = "interior +0x523F8 of gf_tfunc_08071DE0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x080C41F0
+mode   = "thumb"
+resume = true
+note   = "interior +0x52410 of gf_tfunc_08071DE0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08122438
+mode   = "thumb"
+resume = true
+note   = "interior +0x7A4 of gf_tfunc_08121C94; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08122854
+mode   = "thumb"
+resume = true
+note   = "interior +0xBC0 of gf_tfunc_08121C94; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0812492C
+mode   = "thumb"
+resume = true
+note   = "interior +0xF4 of gf_tfunc_08124838; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081249D4
+mode   = "thumb"
+resume = true
+note   = "interior +0x19C of gf_tfunc_08124838; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08131068
+mode   = "thumb"
+resume = true
+note   = "interior +0x6 of gf_tfunc_08131062; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x08131108
+mode   = "thumb"
+resume = true
+note   = "interior +0xA6 of gf_tfunc_08131062; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0816DD04
+mode   = "thumb"
+resume = true
+note   = "interior +0x1EC8 of gf_tfunc_0816BE3C; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x0816DD9C
+mode   = "thumb"
+resume = true
+note   = "interior +0x1F60 of gf_tfunc_0816BE3C; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081A6154
+mode   = "thumb"
+resume = true
+note   = "interior +0x1986 of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081A61A0
+mode   = "thumb"
+resume = true
+note   = "interior +0x19D2 of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081AE71C
+mode   = "thumb"
+resume = true
+note   = "interior +0x9F4E of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081AE74C
+mode   = "thumb"
+resume = true
+note   = "interior +0x9F7E of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081B02F8
+mode   = "thumb"
+resume = true
+note   = "interior +0xBB2A of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081B0E30
+mode   = "thumb"
+resume = true
+note   = "interior +0xC662 of gf_tfunc_081A47CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C0122
+mode   = "thumb"
+resume = true
+note   = "interior +0x26 of gf_tfunc_081C00FC; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C211A
+mode   = "thumb"
+resume = true
+note   = "interior +0x20 of gf_tfunc_081C20FA; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C239C
+mode   = "thumb"
+resume = true
+note   = "interior +0x6 of gf_tfunc_081C2396; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C3326
+mode   = "thumb"
+resume = true
+note   = "interior +0x10 of gf_tfunc_081C3316; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C585A
+mode   = "thumb"
+resume = true
+note   = "interior +0xE of gf_tfunc_081C584C; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C5B64
+mode   = "thumb"
+resume = true
+note   = "interior +0xAC of gf_tfunc_081C5AB8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C5D90
+mode   = "thumb"
+resume = true
+note   = "interior +0x8 of gf_tfunc_081C5D88; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C5F26
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081C5F24; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C652A
+mode   = "thumb"
+resume = true
+note   = "interior +0x22 of gf_tfunc_081C6508; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C6870
+mode   = "thumb"
+resume = true
+note   = "interior +0x2DE of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C687C
+mode   = "thumb"
+resume = true
+note   = "interior +0x2EA of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C6892
+mode   = "thumb"
+resume = true
+note   = "interior +0x300 of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C68B8
+mode   = "thumb"
+resume = true
+note   = "interior +0x326 of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C68CE
+mode   = "thumb"
+resume = true
+note   = "interior +0x33C of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C68D4
+mode   = "thumb"
+resume = true
+note   = "interior +0x342 of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C692A
+mode   = "thumb"
+resume = true
+note   = "interior +0x398 of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081C6950
+mode   = "thumb"
+resume = true
+note   = "interior +0x3BE of gf_tfunc_081C6592; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CE8E8
+mode   = "thumb"
+resume = true
+note   = "interior +0xE0 of gf_tfunc_081CE808; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CE940
+mode   = "thumb"
+resume = true
+note   = "interior +0x138 of gf_tfunc_081CE808; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CE970
+mode   = "thumb"
+resume = true
+note   = "interior +0x168 of gf_tfunc_081CE808; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CE99C
+mode   = "thumb"
+resume = true
+note   = "interior +0x194 of gf_tfunc_081CE808; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CEE08
+mode   = "thumb"
+resume = true
+note   = "interior +0x9E of gf_tfunc_081CED6A; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081CEE0C
+mode   = "thumb"
+resume = true
+note   = "interior +0xA2 of gf_tfunc_081CED6A; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D0AD0
+mode   = "thumb"
+resume = true
+note   = "interior +0x202 of gf_tfunc_081D08CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D0B40
+mode   = "thumb"
+resume = true
+note   = "interior +0x272 of gf_tfunc_081D08CE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D10DE
+mode   = "thumb"
+resume = true
+note   = "interior +0xE6 of gf_tfunc_081D0FF8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D3DE8
+mode   = "thumb"
+resume = true
+note   = "interior +0xC6 of gf_tfunc_081D3D22; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D3DEC
+mode   = "thumb"
+resume = true
+note   = "interior +0xCA of gf_tfunc_081D3D22; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D4270
+mode   = "thumb"
+resume = true
+note   = "interior +0x54E of gf_tfunc_081D3D22; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D427C
+mode   = "thumb"
+resume = true
+note   = "interior +0x55A of gf_tfunc_081D3D22; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D517C
+mode   = "thumb"
+resume = true
+note   = "interior +0x4C of gf_afunc_081D5130; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5184
+mode   = "thumb"
+resume = true
+note   = "interior +0x54 of gf_afunc_081D5130; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5564
+mode   = "thumb"
+resume = true
+note   = "interior +0x1A of gf_tfunc_081D554A; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D557C
+mode   = "thumb"
+resume = true
+note   = "interior +0x32 of gf_tfunc_081D554A; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D559C
+mode   = "thumb"
+resume = true
+note   = "interior +0x52 of gf_tfunc_081D554A; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5698
+mode   = "thumb"
+resume = true
+note   = "interior +0xA0 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D569E
+mode   = "thumb"
+resume = true
+note   = "interior +0xA6 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56AC
+mode   = "thumb"
+resume = true
+note   = "interior +0xB4 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56B2
+mode   = "thumb"
+resume = true
+note   = "interior +0xBA of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56C0
+mode   = "thumb"
+resume = true
+note   = "interior +0xC8 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56DA
+mode   = "thumb"
+resume = true
+note   = "interior +0xE2 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56E2
+mode   = "thumb"
+resume = true
+note   = "interior +0xEA of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56EA
+mode   = "thumb"
+resume = true
+note   = "interior +0xF2 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56F0
+mode   = "thumb"
+resume = true
+note   = "interior +0xF8 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D56F6
+mode   = "thumb"
+resume = true
+note   = "interior +0xFE of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5704
+mode   = "thumb"
+resume = true
+note   = "interior +0x10C of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D570A
+mode   = "thumb"
+resume = true
+note   = "interior +0x112 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5718
+mode   = "thumb"
+resume = true
+note   = "interior +0x120 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D571E
+mode   = "thumb"
+resume = true
+note   = "interior +0x126 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D572C
+mode   = "thumb"
+resume = true
+note   = "interior +0x134 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5732
+mode   = "thumb"
+resume = true
+note   = "interior +0x13A of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5740
+mode   = "thumb"
+resume = true
+note   = "interior +0x148 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5746
+mode   = "thumb"
+resume = true
+note   = "interior +0x14E of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D574C
+mode   = "thumb"
+resume = true
+note   = "interior +0x154 of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D5752
+mode   = "thumb"
+resume = true
+note   = "interior +0x15A of gf_tfunc_081D55F8; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D64A0
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081D649E; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D6588
+mode   = "thumb"
+resume = true
+note   = "interior +0x4 of gf_tfunc_081D6584; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D92E8
+mode   = "thumb"
+resume = true
+note   = "interior +0xE of gf_tfunc_081D92DA; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9382
+mode   = "thumb"
+resume = true
+note   = "interior +0xA of gf_tfunc_081D9378; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D938C
+mode   = "thumb"
+resume = true
+note   = "interior +0x14 of gf_tfunc_081D9378; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D93AA
+mode   = "thumb"
+resume = true
+note   = "interior +0x32 of gf_tfunc_081D9378; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D93CE
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081D93CC; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D93DA
+mode   = "thumb"
+resume = true
+note   = "interior +0xE of gf_tfunc_081D93CC; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9478
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081D9476; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D948A
+mode   = "thumb"
+resume = true
+note   = "interior +0x14 of gf_tfunc_081D9476; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D94A6
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081D94A4; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9560
+mode   = "thumb"
+resume = true
+note   = "interior +0x12 of gf_tfunc_081D954E; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D958A
+mode   = "thumb"
+resume = true
+note   = "interior +0x4 of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D959A
+mode   = "thumb"
+resume = true
+note   = "interior +0x14 of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D95A4
+mode   = "thumb"
+resume = true
+note   = "interior +0x1E of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D95AA
+mode   = "thumb"
+resume = true
+note   = "interior +0x24 of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D95AE
+mode   = "thumb"
+resume = true
+note   = "interior +0x28 of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D95B4
+mode   = "thumb"
+resume = true
+note   = "interior +0x2E of gf_tfunc_081D9586; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9646
+mode   = "thumb"
+resume = true
+note   = "interior +0x10 of gf_tfunc_081D9636; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D966C
+mode   = "thumb"
+resume = true
+note   = "interior +0x8 of gf_tfunc_081D9664; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D968A
+mode   = "thumb"
+resume = true
+note   = "interior +0x4 of gf_tfunc_081D9686; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D969C
+mode   = "thumb"
+resume = true
+note   = "interior +0x16 of gf_tfunc_081D9686; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D96A8
+mode   = "thumb"
+resume = true
+note   = "interior +0x22 of gf_tfunc_081D9686; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D97A8
+mode   = "thumb"
+resume = true
+note   = "interior +0xA of gf_tfunc_081D979E; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D97B6
+mode   = "thumb"
+resume = true
+note   = "interior +0x8 of gf_tfunc_081D97AE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9974
+mode   = "thumb"
+resume = true
+note   = "interior +0x2 of gf_tfunc_081D9972; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D99C0
+mode   = "thumb"
+resume = true
+note   = "interior +0x12 of gf_tfunc_081D99AE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9B3E
+mode   = "thumb"
+resume = true
+note   = "interior +0x10 of gf_tfunc_081D9B2E; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081D9EF8
+mode   = "thumb"
+resume = true
+note   = "interior +0xA of gf_tfunc_081D9EEE; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081DA9A6
+mode   = "thumb"
+resume = true
+note   = "interior +0x6 of gf_tfunc_081DA9A0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081DA9C6
+mode   = "thumb"
+resume = true
+note   = "interior +0x26 of gf_tfunc_081DA9A0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081DA9E6
+mode   = "thumb"
+resume = true
+note   = "interior +0x6 of gf_tfunc_081DA9E0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081DA9EC
+mode   = "thumb"
+resume = true
+note   = "interior +0xC of gf_tfunc_081DA9E0; computed-jump re-entry"
+
+[[extra_func]]
+addr   = 0x081DA9F8
+mode   = "thumb"
+resume = true
+note   = "interior +0x18 of gf_tfunc_081DA9E0; computed-jump re-entry"
+
+# ── Round 2 (merged from a completed 4000-frame driven run) ────────────
+#
+# Round 1's resume aliases removed the runaway bridge and brought static into
+# exact agreement with the interpreter (vram_nonzero / pal / oam all identical),
+# but coverage was still NOT_STATIC with 143 misses and ~70.8M interpreted
+# instructions. Two categories in that log:
+#
+#  * Two IWRAM-resident hot routines dominated the interpreted count
+#    (0x03001D40 x82553, 0x03001E4C x75190, 0x03001808 x3646). Unlike the
+#    intro-patched dump, these are VERBATIM ROM->IWRAM copies, so [[code_copy]]
+#    covers them. Both ranges were grown byte-by-byte from a seed match and
+#    verified identical across their whole extent before being written here.
+#  * 139 further interior re-entry points, same shape as round 1.
+
+[[code_copy]]
+runtime_start = 0x03001806
+source_start  = 0x081D51BE
+size          = 0x00000402
+name          = "iwram_hot_03001806"
+note          = "verbatim ROM->IWRAM copy of hot routines; verified byte-identical over the whole range"
+
+[[code_copy]]
+runtime_start = 0x03001D40
+source_start  = 0x080001E0
+size          = 0x00000800
+name          = "iwram_hot_03001D40"
+note          = "verbatim ROM->IWRAM copy of hot routines; verified byte-identical over the whole range"
+
+[[extra_func]]
+addr   = 0x08000B68
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080003BC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08000B98
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080003BC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08000C54
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080003BC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08000E14
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080003BC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08000E80
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08000E68; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0800340C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800315C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08004AD8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800344C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08004DB8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800344C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0800BF8C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800BED4; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0800D650
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800BED4; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0800E0D8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0800E0B0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08012DE0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08012CAA; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08032B24
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0802EA36; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0803CCF4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803B566; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0803CDEC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803B566; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0803E4A8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803CE94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08041328
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803CE94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08041610
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803CE94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x080417D4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803CE94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08041878
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0803CE94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08044DA0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08044D94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0804530C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08045146; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0804552C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08045146; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08045550
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08045146; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x080455B0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08045146; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08045790
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080456E0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08045858
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08045834; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08056AC8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08055704; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x080575E8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08056F0A; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0807022C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08070100; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08071D88
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08071D4A; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x080724C0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0807230E; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x080C4218
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_080C41F0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081221C4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08122036; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0812221C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08122036; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08122BB0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08122854; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08124A40
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081249D4; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0812E43C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0812D320; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0812E638
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0812D320; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0812F8E4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0812F8DA; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x08131330
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_08131120; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x0816DE48
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_0816DDA2; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A5D30
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A5D18; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A5DC8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A5D18; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A5E60
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A5D18; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A5F10
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A5D18; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A66FC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A61FA; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A67D4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A6AFC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A72F4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A76A0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A76E8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A7A44
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A7A94
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A7D80
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A7DD4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8728
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8770
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8828
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8998
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8A8C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8B14
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8D68
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8E34
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8F14
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8F94
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A8FC0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A9218
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A9224
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A923C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A9480
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081A9EA4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AA074
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AA0A4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AB1FC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AB4A4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AB7D8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081ABA60
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081ABF18
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AC0D0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AC490
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AC628
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AC990
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081ACC5C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081ACDBC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AD04C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AD098
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081A6758; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081AE884
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081AE7D6; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081B1320
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081B0EDC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081BF260
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081BF16C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081C5934
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081C5932; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081C59E6
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081C59E2; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081C63E2
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081C63C8; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081C6B9A
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081C6B94; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081CE860
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081CE808; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081CE898
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081CE808; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081CEB7C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081CE9F0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081CEE2C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081CEE0C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081CFA6C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081CF1C0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D034C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D0340; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D0A00
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D08CE; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D0BC8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D0B40; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D1658
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D162C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D16D8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D162C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D16F8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D162C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D17FC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D162C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D18A0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D1882; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D3730
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D36B0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D3E74
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D3DF6; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D42BC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D427C; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D5648
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D5600; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9356
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9354; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9394
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9378; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9396
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9378; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9398
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9378; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D93EC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D93CC; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9442
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9440; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D948E
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9476; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9596
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9586; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D95A6
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9586; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D95AC
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9586; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D95D4
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D95C4; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9612
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9608; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9674
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9670; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9676
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9670; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D968E
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9686; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D96D0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D96C8; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9746
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9740; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D978C
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9778; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D984A
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9844; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9914
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D98F0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9998
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9984; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D99BE
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D99AE; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081D9EF0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081D9EEE; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081DA9A2
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081DA9A0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081DA9B0
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081DA9A0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081DA9C2
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081DA9A0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081DA9D8
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081DA9A0; round-2 miss-log merge"
+
+[[extra_func]]
+addr   = 0x081DAA06
+mode   = "thumb"
+resume = true
+note   = "interior of gf_tfunc_081DA9E0; round-2 miss-log merge"

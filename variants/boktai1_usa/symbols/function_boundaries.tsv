@@ -1,0 +1,2 @@
+# function_boundaries.tsv — addr<TAB>mode[<TAB>end][<TAB>name]
+# Grown from dispatch_misses.log. Empty is valid: the finder walks from entry_pc.

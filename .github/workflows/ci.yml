@@ -1,0 +1,107 @@
+# CI — build and test everything that does NOT need the ROM.
+#
+# This workflow deliberately does not produce a playable artifact, and cannot:
+# the recompiled sources under variants/*/generated/ are derivative of a
+# copyrighted ROM, so they are gitignored and regenerated locally. CI has no ROM
+# and never will. What it *can* do is prove the tree configures, compiles and
+# passes the engine's suites on all three platforms, which is where portability
+# regressions actually show up (this project has already hit Windows-only
+# absolute paths, a PE-only linker flag, and a stubbed loader).
+#
+# Release packaging is therefore a local step — see docs/PACKAGING.md.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine:
+    name: engine + tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-2022]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2 ninja
+
+      - name: Install SDL2 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev ninja-build libcurl4-openssl-dev
+
+      - name: Install SDL2 (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install sdl2:x64-windows curl:x64-windows
+
+      # The engine is the part with real test coverage, and it is ROM-independent.
+      - name: Configure engine
+        working-directory: gbarecomp
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build engine
+        working-directory: gbarecomp
+        run: cmake --build build --parallel
+
+      # oracle needs a vendored mGBA checkout; bios_intro_flawless needs a BIOS.
+      # Both are excluded rather than silently failing.
+      - name: Test engine
+        working-directory: gbarecomp
+        run: ctest --test-dir build -E "oracle|bios_intro_flawless" --output-on-failure
+
+      # Compiles this repo's own non-generated sources (solar_weather, game_ui,
+      # main) against the engine headers. Catches the class of break that only
+      # shows up when the submodule moves, without needing a ROM.
+      - name: Compile game sources (no ROM)
+        shell: bash
+        run: |
+          set -euo pipefail
+          INC="-Igbarecomp/src/runtime -Igbarecomp/src/gba -Isrc"
+          INC="$INC -Irecomp-ui/src -Irecomp-ui/src/common"
+          for f in src/solar_weather.cpp src/game_ui.cpp; do
+            echo "--- $f"
+            c++ -std=c++20 -fsyntax-only $INC \
+                -DGBARECOMP_RUNTIME_UI=1 -DRECOMP_RUNTIME_UI_HAS_TEXT=1 "$f"
+          done
+
+  packaging:
+    name: packaging scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Shell syntax
+        run: |
+          for s in gbarecomp/packaging/package_macos.sh \
+                   gbarecomp/packaging/flatpak/build_flatpak.sh; do
+            bash -n "$s" && echo "ok: $s"
+          done
+
+      # Generation is testable without flatpak-builder; the build is not, since
+      # it needs the recompiled sources.
+      - name: Flatpak manifest generates and is valid YAML
+        run: |
+          gbarecomp/packaging/flatpak/build_flatpak.sh \
+            --target BoktaiRecomp --name Boktai \
+            --id tech.recomp.BoktaiRecomp --generate-only
+          python3 -c "
+          import yaml, sys
+          m = yaml.safe_load(open('flatpak-build/tech.recomp.BoktaiRecomp.yml'))
+          assert m['command'] == 'BoktaiRecomp', m['command']
+          assert m['id'] == 'tech.recomp.BoktaiRecomp', m['id']
+          print('manifest OK:', [x['name'] for x in m['modules']])
+          "

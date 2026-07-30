@@ -1,0 +1,53 @@
+# game.toml — Boktai: The Sun Is in Your Hand (GBA), USA
+#
+# Paths resolve relative to THIS file's directory (variants/boktai1_usa/),
+# per runtime.cpp resolve_config_path.
+
+[game]
+name           = "Boktai: The Sun Is in Your Hand"
+short_name     = "boktai1"
+default_region = "usa"
+
+[bios]
+path = "../../../gbarecomp/bios/gba_bios.bin"   # override via --bios
+sha1 = "300c20df6731a33952ded8c436f7f186d25d3492"
+# Default is LLE (the recompiled real BIOS), which is also the correctness
+# oracle. Boktai reads the RTC during boot, so keep the real BIOS path until
+# the game is stable. Uncomment to opt into SWI HLE:
+# hle            = true
+# hle_keep_intro = false
+
+[rom]
+path = "roms/boktai1_usa.gba"   # user-provided; gitignored
+# sha1 lives in config/boktai1_usa.toml (92bda1b6…).
+
+[recompiler]
+entry_point   = "0x08000000"
+seeds         = "symbols/imported_symbols.tsv"
+boundaries    = "symbols/function_boundaries.tsv"
+out_dir       = "generated"
+strict        = false
+
+[save]
+# Auto-detected from the ROM: detect_save_type() finds EEPROM_V at 0x584508.
+# These keys are documentation; the engine services the chip from the scan.
+type = "eeprom"
+size = "0x2000"           # 8 KB (64 Kbit)
+
+[runtime]
+debug_port    = 19893
+window_title  = "BoktaiRecomp"
+
+# ── Solar sensor (in development) ─────────────────────────────────────
+# Boktai's cartridge carries a photodiode on the same GPIO port as the RTC.
+# The engine does not model it yet; see ../../../PLAN.md. Until it lands,
+# RECOMP_SOLAR_FIXED pins a deterministic value for tests and cosim.
+#
+# [solar]
+# provider = "camera"     # fixed | slider | replay | camera
+# curve    = "medium"     # faithful | medium | forgiving
+# gain     = 1.0
+
+[functions]
+arm   = []
+thumb = []
