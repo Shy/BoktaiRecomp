@@ -185,6 +185,20 @@ int main(int argc, char** argv) {
     // making the player set GBARECOMP_SOLAR. Light itself is game policy.
     opts.has_solar_sensor = true;
     opts.solar_provider   = &boktai::solar_weather_brightness;
+
+    // ---- 16:10 extended view (EXPERIMENTAL) ---------------------------------
+    // 256x160 is not an arbitrary width: 256/160 is exactly 16:10, and 256x160
+    // at integer scale 5 is 1280x800 -- the Steam Deck panel, pixel-perfect with
+    // no letterboxing. Native 240x160 can only reach 1200x800 at 5x, leaving
+    // 40px bars each side.
+    //
+    // Authorizing the width only makes the PPU render 8 extra columns per side;
+    // it does not make the GAME aware of them. Nothing is patched yet, so expect
+    // artifacts in the margins (see docs/WIDESCREEN.md). Left opt-in and OFF in
+    // the launcher until those are characterized.
+    opts.max_view_width = 256;
+    opts.widescreen_view_width = 256;
+    opts.launcher_expose_widescreen = false;   // not ready to advertise
     boktai::game_ui_install(opts);   // solar section in the in-game menu
 
 #if defined(RECOMP_LAUNCHER)
