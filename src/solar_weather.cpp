@@ -67,7 +67,7 @@ constexpr double kGaugeFullBrightness = 159.0;
 constexpr unsigned kManualSteps[9] = {0, 8, 16, 24, 31, 63, 95, 127, 159};
 
 std::uint8_t irradiance_to_brightness(double ghi, double full_sun) {
-    if (!(full_sun > 0.0)) full_sun = 900.0;
+    if (!(full_sun > 0.0)) full_sun = 850.0;
     double f = ghi / full_sun;
     if (!(f > 0.0)) f = 0.0;        // also catches NaN
     if (f > 1.0)    f = 1.0;
@@ -175,15 +175,19 @@ bool geocode(const std::string& country, const std::string& zip, bool verbose,
     return true;
 }
 
-// Fetches current conditions. `ghi` is the load-bearing value; cloud cover and
-// the day flag are reported only, as context for a surprising reading.
-bool fetch_conditions(double lat, double lon, bool verbose, double& ghi,
-                      double& cloud, double& is_day) {
-    char url[256];
+// Fetches current conditions. `direct` and `diffuse` are the load-bearing
+// values; GHI, cloud cover and the day flag are reported only, as context for a
+// surprising reading. GHI is still requested because it is what a weather app
+// would show the player, so it makes a low gauge on a "bright" day explainable.
+bool fetch_conditions(double lat, double lon, bool verbose, double& direct,
+                      double& diffuse, double& ghi, double& cloud,
+                      double& is_day) {
+    char url[320];
     std::snprintf(url, sizeof(url),
                   "https://api.open-meteo.com/v1/forecast"
                   "?latitude=%.4f&longitude=%.4f"
-                  "&current=shortwave_radiation,cloud_cover,is_day"
+                  "&current=direct_radiation,diffuse_radiation,"
+                  "shortwave_radiation,cloud_cover,is_day"
                   "&timezone=auto",
                   lat, lon);
     std::string body;
@@ -194,7 +198,12 @@ bool fetch_conditions(double lat, double lon, bool verbose, double& ghi,
     // read the units and parse as 0.
     const std::size_t cur = body.find("\"current\":");
     if (cur == std::string::npos) return false;
-    if (!json_scalar(body, "shortwave_radiation", ghi, cur)) return false;
+    // Both components are required: without them there is no way to separate
+    // sun from cloud, and silently falling back to GHI would resurrect exactly
+    // the bug this replaced.
+    if (!json_scalar(body, "direct_radiation", direct, cur))   return false;
+    if (!json_scalar(body, "diffuse_radiation", diffuse, cur)) return false;
+    if (!json_scalar(body, "shortwave_radiation", ghi, cur)) ghi = -1.0;
     if (!json_scalar(body, "cloud_cover", cloud, cur))  cloud  = -1.0;
     if (!json_scalar(body, "is_day", is_day, cur))      is_day = -1.0;
     return true;
@@ -238,6 +247,7 @@ void poll_loop() {
         std::string zip, country;
         unsigned poll_seconds;
         double full_sun;
+        double diffuse_weight;
         bool verbose;
         {
             std::lock_guard<std::mutex> lk(g_mu);
@@ -252,6 +262,7 @@ void poll_loop() {
             country = g_cfg.country;
             poll_seconds = g_cfg.poll_seconds;
             full_sun = g_cfg.full_sun_irradiance;
+            diffuse_weight = g_cfg.diffuse_weight;
             verbose = g_cfg.verbose;
         }
 
@@ -298,9 +309,14 @@ void poll_loop() {
             }
         }
 
-        double ghi = 0.0, cloud = -1.0, is_day = -1.0;
-        if (fetch_conditions(lat, lon, verbose, ghi, cloud, is_day)) {
-            const std::uint8_t b = irradiance_to_brightness(ghi, full_sun);
+        double direct = 0.0, diffuse = 0.0, ghi = -1.0;
+        double cloud = -1.0, is_day = -1.0;
+        if (fetch_conditions(lat, lon, verbose, direct, diffuse, ghi, cloud,
+                             is_day)) {
+            // The gauge tracks sun, not sky brightness -- see
+            // SolarWeatherConfig::diffuse_weight.
+            const double effective = direct + diffuse_weight * diffuse;
+            const std::uint8_t b = irradiance_to_brightness(effective, full_sun);
             const bool first =
                 !g_have_sample.exchange(true, std::memory_order_relaxed);
             g_weather_brightness.store(b, std::memory_order_relaxed);
@@ -308,16 +324,20 @@ void poll_loop() {
             warned_poll = false;
             {
                 std::lock_guard<std::mutex> lk(g_mu);
-                g_last_ghi = ghi;
+                // Stored value is the EFFECTIVE irradiance, so a later
+                // full-sun change re-maps the same number the gauge used.
+                g_last_ghi = effective;
                 g_last_cloud = cloud;
                 g_last_is_day = is_day > 0.0;
             }
             // Always announce the first reading — it is the confirmation that
             // the whole chain works — then only on request.
             if (first || verbose) {
-                std::printf("solar_weather: %.0f W/m^2, cloud %.0f%%, "
-                            "day %.0f -> brightness %u\n",
-                            ghi, cloud, is_day, static_cast<unsigned>(b));
+                std::printf("solar_weather: direct %.0f + %.2f*diffuse %.0f "
+                            "= %.0f W/m^2 (GHI %.0f, cloud %.0f%%, day %.0f)"
+                            " -> brightness %u\n",
+                            direct, diffuse_weight, diffuse, effective, ghi,
+                            cloud, is_day, static_cast<unsigned>(b));
                 std::fflush(stdout);
             }
         } else {
@@ -575,6 +595,7 @@ bool solar_config_load(SolarWeatherConfig* cfg) {
         if (k == "zip")               cfg->zipcode = v;
         else if (k == "country")      cfg->country = v;
         else if (k == "full_sun")     cfg->full_sun_irradiance = std::strtod(v.c_str(), nullptr);
+        else if (k == "diffuse_weight") cfg->diffuse_weight = std::strtod(v.c_str(), nullptr);
         else if (k == "poll")         cfg->poll_seconds = static_cast<unsigned>(std::strtoul(v.c_str(), nullptr, 10));
         else if (k == "verbose")      cfg->verbose = (v != "0");
         else if (k == "manual_step")  solar_set_manual_step(static_cast<int>(std::strtol(v.c_str(), nullptr, 10)));
@@ -614,6 +635,9 @@ void solar_config_save(const SolarWeatherConfig& cfg) {
         << "zip         = " << cfg.zipcode << "\n"
         << "country     = " << cfg.country << "\n"
         << "full_sun    = " << static_cast<long>(cfg.full_sun_irradiance) << "\n"
+        << "# 0.10 = only direct sun really counts; 1.0 restores counting bright\n"
+        << "# overcast as sunshine (which reads ~5/8 bars in dense drizzle).\n"
+        << "diffuse_weight = " << cfg.diffuse_weight << "\n"
         << "poll        = " << cfg.poll_seconds << "\n"
         << "source      = "
         << (solar_source() == SolarSource::Manual ? "manual" : "live") << "\n"

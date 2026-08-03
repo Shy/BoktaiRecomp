@@ -44,10 +44,27 @@ struct SolarWeatherConfig {
     std::string country = "us";
 
     // Irradiance treated as "full sun", i.e. mapped to a saturated gauge.
-    // 900 W/m^2 is about clear-sky midday at mid latitudes. Players far from
-    // the equator, or in winter, should lower this so a genuinely sunny local
-    // day can still fill the gauge.
-    double full_sun_irradiance = 900.0;
+    // 850 W/m^2 is about the clear-sky midday peak of the DIRECT-weighted
+    // measure below at mid latitudes (measured: 840 W/m^2 on a clear early-August
+    // day in Brooklyn). Players far from the equator, or in winter, should lower
+    // this so a genuinely sunny local day can still fill the gauge.
+    double full_sun_irradiance = 850.0;
+
+    // How much diffuse skylight counts toward the gauge, relative to direct
+    // sun. This exists because global horizontal irradiance (GHI) — what this
+    // used to feed the gauge — cannot tell sunshine from bright overcast, and
+    // Boktai's photodiode is meant to reward pointing it at the sun.
+    //
+    // Measured in 11206 on a drizzly 2026-08-03: GHI 413 W/m^2 with direct 0 and
+    // diffuse 413. Straight GHI scored that dense drizzle 5 bars out of 8. Worse,
+    // 15:00 (fully overcast, direct 0) and 18:00 (clear, direct 234) both scored
+    // 5 — the metric was blind to the only thing the sensor cares about.
+    //
+    // So the gauge reads direct + weight*diffuse. At 0.10 that same drizzle
+    // reads 0-1 bars, a break in the cloud reads 3, clear evening sun reads 4,
+    // and clear midday still saturates at 8. Raise it if overcast should be more
+    // generous; 1.0 restores the old GHI behaviour exactly.
+    double diffuse_weight = 0.10;
 
     // Seconds between polls. Open-Meteo advances `current` every 900 s, so
     // polling faster than that only adds requests, not information.
