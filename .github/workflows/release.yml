@@ -1,30 +1,4 @@
-# release.yml — build distributable packages and publish a GitHub Release.
-#
-# ---------------------------------------------------------------------------
-# The ROM problem, and how this handles it
-#
-# A recompiled binary is produced from translated ROM code, so this workflow
-# cannot build anything playable from a clean clone: variants/*/generated/ is
-# gitignored (it is derivative of a copyrighted cartridge) and there is no ROM on
-# a GitHub runner.
-#
-# So the ROM has to come from somewhere the repository owner controls. Set two
-# repository secrets:
-#
-#   ROM_URL     a private URL the runner can fetch the cartridge dump from
-#   ROM_SHA1    expected sha1, verified before anything is built
-#
-# Optionally BIOS_URL / BIOS_SHA1 for the GBA BIOS, which is also required and
-# also not shipped here.
-#
-# With the secrets unset the build jobs SKIP with a clear message rather than
-# failing red — a fork should not see a permanently broken workflow it cannot fix.
-#
-# Note what publishing means: the resulting binaries embed translated ROM code.
-# Whether to attach them to a public Release is the repository owner's call; this
-# workflow creates the Release as a DRAFT so that is always a deliberate step.
-# ---------------------------------------------------------------------------
-
+# Publish only the ROM-free builder. Players supply their own ROM and BIOS.
 name: Release
 
 on:
@@ -33,211 +7,99 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag for the draft release (e.g. v0.1.0)'
+        description: 'Version tag for the draft release (for example v0.1.0)'
         required: true
         default: 'v0.0.1'
 
 permissions:
-  contents: write     # required to create the release and upload assets
+  contents: write
 
 jobs:
-  # Cheap gate: report once whether a build is even possible, so the matrix jobs
-  # do not each repeat the explanation.
-  check-assets:
-    name: assets configured?
-    runs-on: ubuntu-24.04
-    outputs:
-      have_rom: ${{ steps.probe.outputs.have_rom }}
-    steps:
-      - id: probe
-        env:
-          ROM_URL: ${{ secrets.ROM_URL }}
-        run: |
-          if [ -n "${ROM_URL:-}" ]; then
-            echo "have_rom=true" >> "$GITHUB_OUTPUT"
-            echo "ROM_URL is set — packaging jobs will run."
-          else
-            echo "have_rom=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ROM_URL secret is not set, so no playable artifact"\
-                 "can be built. This is expected for forks: the recompiled"\
-                 "sources are derived from a copyrighted cartridge and are never"\
-                 "committed. See docs/PACKAGING.md to build locally."
-          fi
-
-  package:
-    name: package (${{ matrix.label }})
-    needs: check-assets
-    if: needs.check-assets.outputs.have_rom == 'true'
+  builder:
+    name: builder (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,     label: macos-arm64, script: package_macos.sh }
-          - { os: ubuntu-24.04, label: linux-x86_64, script: package_linux.sh }
-
+          - { os: macos-14, label: macos-arm64 }
+          - { os: ubuntu-24.04, label: linux-x86_64 }
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install sdl2 ninja
-
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev ninja-build \
-                                  libcurl4-openssl-dev patchelf
-
-      # Fetched to a path outside the repo so it can never be picked up by a
-      # `git add` or copied into a package by accident.
-      - name: Fetch and verify the cartridge dump
-        env:
-          ROM_URL: ${{ secrets.ROM_URL }}
-          ROM_SHA1: ${{ secrets.ROM_SHA1 }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/assets"
-          curl -fsSL "$ROM_URL" -o "$RUNNER_TEMP/assets/rom.gba"
-          got=$(shasum -a 1 "$RUNNER_TEMP/assets/rom.gba" | cut -d' ' -f1)
-          if [ -n "${ROM_SHA1:-}" ] && [ "$got" != "$ROM_SHA1" ]; then
-            echo "::error::ROM sha1 mismatch: got $got, expected $ROM_SHA1"
-            exit 1
-          fi
-          echo "ROM sha1 $got"
-          mkdir -p variants/boktai1_usa/roms
-          cp "$RUNNER_TEMP/assets/rom.gba" \
-             variants/boktai1_usa/roms/boktai1_usa.gba
-
-      - name: Fetch and verify the BIOS
-        env:
-          BIOS_URL: ${{ secrets.BIOS_URL }}
-          BIOS_SHA1: ${{ secrets.BIOS_SHA1 }}
-        run: |
-          set -euo pipefail
-          if [ -z "${BIOS_URL:-}" ]; then
-            echo "::error::BIOS_URL is not set. Every gbarecomp game boots"\
-                 "through the real BIOS, so it is required, not optional."
-            exit 1
-          fi
-          curl -fsSL "$BIOS_URL" -o gbarecomp/bios/gba_bios.bin
-          got=$(shasum -a 1 gbarecomp/bios/gba_bios.bin | cut -d' ' -f1)
-          if [ -n "${BIOS_SHA1:-}" ] && [ "$got" != "$BIOS_SHA1" ]; then
-            echo "::error::BIOS sha1 mismatch: got $got, expected $BIOS_SHA1"
-            exit 1
-          fi
-          echo "BIOS sha1 $got"
-
-      # The recompiler has to exist before anything can be translated, and the
-      # BIOS has to be translated before the game links (BIOS is not HLE'd).
-      - name: Build the recompiler
-        run: |
-          cmake -B gbarecomp/build -S gbarecomp -DCMAKE_BUILD_TYPE=Release
-          cmake --build gbarecomp/build --target gba_recompile --parallel
-
-      - name: Recompile the BIOS
-        run: |
-          ./gbarecomp/build/gba_recompile \
-            --bios gbarecomp/bios/gba_bios.bin \
-            --config gbarecomp/bios/gba_bios.toml
-
-      - name: Recompile the cartridge
-        run: |
-          ./gbarecomp/build/gba_recompile \
-            --rom    variants/boktai1_usa/roms/boktai1_usa.gba \
-            --config variants/boktai1_usa/symbols/boktai1_usa_recompile.toml \
-            --out    variants/boktai1_usa/generated
-
-      - name: Package
-        run: |
-          gbarecomp/packaging/${{ matrix.script }} \
-            --target BoktaiRecomp --name Boktai -DGBAGAME_RECOMP_UI=ON
-
-      # The packaging scripts already run a --help smoke test, which exercises
-      # startup and every dlopen before a ROM is needed. This additionally proves
-      # the packaged binary boots the real ROM and renders frames.
-      - name: Verify the package actually boots the ROM
-        run: |
-          set -euo pipefail
-          dir=$(echo release-stage/Boktai-*/)
-          cd "$dir"
-          GBARECOMP_NO_LAUNCHER=1 ./BoktaiRecomp \
-            --frames 60 --no-window \
-            --bios "$GITHUB_WORKSPACE/gbarecomp/bios/gba_bios.bin" \
-            --rom  "$GITHUB_WORKSPACE/variants/boktai1_usa/roms/boktai1_usa.gba" \
-            | tee /tmp/boot.log
-          grep -q 'rom_loaded' /tmp/boot.log
-          grep -q 'ppu_frames=60' /tmp/boot.log
-          echo "package boots the ROM and rendered 60 frames"
-
-      # Guard against the packaging scripts ever regressing into shipping the
-      # cartridge or BIOS. Cheap, and the consequence of missing it is bad.
-      - name: Assert no copyrighted data in the artifact
-        run: |
-          set -euo pipefail
-          if find release-stage -type f \
-               \( -name '*.gba' -o -name '*.agb' -o -name 'gba_bios.bin' \) \
-               | grep .; then
-            echo "::error::the package contains cartridge or BIOS data"
-            exit 1
-          fi
-          echo "artifact carries no ROM or BIOS"
-
+          sudo apt-get install -y libsdl2-dev ninja-build libcurl4-openssl-dev \
+                                  libgl1-mesa-dev patchelf
+      - name: Package the builder
+        run: tools/package_builder.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: Boktai-${{ matrix.label }}
+          name: BoktaiBuilder-${{ matrix.label }}
           path: release-stage/*.tar.gz
+          if-no-files-found: error
+
+  builder-flatpak:
+    name: builder Flatpak (Steam Deck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Flatpak builder and runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub org.freedesktop.Sdk//23.08
+      - name: Build the builder Flatpak
+        run: tools/package_builder_flatpak.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoktaiBuilder-flatpak
+          path: flatpak-build/BoktaiBuilder.flatpak
           if-no-files-found: error
 
   draft-release:
     name: draft release
-    needs: package
+    needs: [builder, builder-flatpak]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: dist }
-
-      - name: Create the draft release
+        with:
+          path: dist
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.version || github.ref_name }}
         run: |
           set -euo pipefail
-          # TAG comes from a workflow_dispatch input, so constrain its shape
-          # before it reaches a command line. It already arrives via env: and is
-          # quoted at every use, but a release tag has an obvious valid form and
-          # rejecting anything else costs nothing.
-          if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$'; then
-            echo "::error::refusing tag '$TAG'; expected something like v0.1.0"
+          if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::invalid release tag: $TAG"
             exit 1
           fi
-          find dist -type f -name '*.tar.gz' | sort
-          # Notes go through a file: every line of a run: block must stay indented
-          # or YAML ends the block scalar early, and release prose wants to start
-          # lines with '*' and '#'.
-          cat > /tmp/notes.md <<'NOTES'
-          **You still need your own legally-dumped ROM and GBA BIOS.** The launcher
-          prompts for both on first run; neither is included in these archives.
+          cat > /tmp/notes.md <<'EOF'
+          These archives contain no game data. They contain BoktaiBuilder, which
+          compiles the game locally from your own legally dumped ROM and GBA BIOS.
 
-          Each archive is self-contained: the executable, its bundled libraries and
-          the launcher assets. Extract it and run `./BoktaiRecomp` from inside the
-          directory.
+          Steam Deck: install `BoktaiBuilder.flatpak` in Desktop Mode with
+          `flatpak install ./BoktaiBuilder.flatpak`, then launch it from the app
+          menu or add BoktaiBuilder as a Non-Steam Game.
 
-          On a Steam Deck, prefer building the Flatpak — SteamOS has an immutable
-          root, so a package that brings its own runtime is a better fit than a
-          tarball. See `docs/PACKAGING.md`.
-          NOTES
+          Desktop Linux/macOS: extract the matching tarball and run BoktaiBuilder.
+          EOF
           sed -i 's/^          //' /tmp/notes.md
-          printf '\nBuilt from `%s`.\n' "${GITHUB_SHA::7}" >> /tmp/notes.md
-          # Draft, not published: these binaries embed translated ROM code, so
-          # making them public should always be an explicit human action.
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Boktai $TAG" \
-            --notes-file /tmp/notes.md \
-            $(find dist -type f -name '*.tar.gz')
-          echo "Draft release $TAG created — review and publish it manually."
+          mapfile -t assets < <(find dist -type f \
+            \( -name '*.tar.gz' -o -name '*.flatpak' \) -print | sort)
+          [ "${#assets[@]}" -eq 3 ] || {
+            echo "::error::expected two tarballs and one Flatpak"; exit 1;
+          }
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "Boktai builder $TAG" --notes-file /tmp/notes.md "${assets[@]}"

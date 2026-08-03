@@ -116,6 +116,74 @@ jobs:
         working-directory: gbarecomp
         run: ctest --test-dir build -E "oracle|bios_intro_flawless" --output-on-failure
 
+  # The builder is what actually gets released, so it is the one target CI can
+  # build to completion: it carries no ROM-derived sources at all. That is not a
+  # claim to take on trust — GBAGAME_BUILDER_ONLY configures with no ROM present,
+  # so if anything ever made the builder depend on generated code, this job fails.
+  builder:
+    name: builder (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2 ninja
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev ninja-build libcurl4-openssl-dev \
+                                  libgl1-mesa-dev
+
+      - name: Configure and build the builder (no ROM present)
+        run: |
+          set -euo pipefail
+          cmake -B build-builder -S . -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DGBAGAME_BUILDER_ONLY=ON
+          cmake --build build-builder --target BoktaiBuilder test_builder_core \
+                --parallel
+
+      - name: Unit-test the progress parser and the asset gate
+        run: ./build-builder/test_builder_core
+
+      # The builder must degrade usefully with nothing to build from, because
+      # that is the state every player starts in. A crash or a silent success
+      # here would both be wrong; the contract is a clear message and exit 1.
+      - name: Pre-flight refuses to build with no assets
+        run: |
+          set -euo pipefail
+          export BOKTAI_BUILDER_SOURCES="$PWD"
+          export BOKTAI_BUILDER_DATA="$RUNNER_TEMP/builder-data"
+          if ./build-builder/BoktaiBuilder --check > out.txt 2>&1; then
+            echo "::error::--check passed with no ROM, which cannot be right"
+            cat out.txt; exit 1
+          fi
+          cat out.txt
+          grep -qi "cartridge" out.txt
+          echo "refused with a message naming the missing asset"
+
+      - name: The builder carries no cartridge-derived code
+        run: |
+          set -euo pipefail
+          ./build-builder/BoktaiBuilder --paths
+          # A ROM-free binary cannot contain the cartridge's own strings. This
+          # would catch a future change that linked generated sources in.
+          if strings build-builder/BoktaiBuilder 2>/dev/null \
+               | grep -q "recompiled_"; then
+            echo "::error::the builder appears to link recompiled sources"
+            exit 1
+          fi
+          echo "no recompiled symbols in the builder binary"
+
   packaging:
     name: packaging scripts
     runs-on: ubuntu-24.04
@@ -129,7 +197,8 @@ jobs:
           set -euo pipefail
           for s in gbarecomp/packaging/package_macos.sh \
                    gbarecomp/packaging/package_linux.sh \
-                   gbarecomp/packaging/flatpak/build_flatpak.sh; do
+                   gbarecomp/packaging/flatpak/build_flatpak.sh \
+                   tools/package_builder_flatpak.sh; do
             bash -n "$s" && echo "ok: $s"
           done
 
@@ -176,4 +245,49 @@ jobs:
           assert any('decoy.gba' in s for s in skip), 'ROM file not skipped'
           print('decoy ROM and BIOS are both excluded from the build sandbox')
           "
-          rm -rf variants/boktai1_usa/roms gbarecomp/bios/gba_bios.bin
+           rm -rf variants/boktai1_usa/roms gbarecomp/bios/gba_bios.bin
+
+  builder-flatpak:
+    name: builder flatpak manifest (Linux)
+    runs-on: ubuntu-24.04
+    needs: packaging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Generate manifest with protected-data decoys
+        run: |
+          set -euo pipefail
+          mkdir -p variants/boktai1_usa/roms \
+                   variants/boktai1_usa/generated gbarecomp/bios
+          : > variants/boktai1_usa/roms/ci-decoy.gba
+          : > gbarecomp/bios/gba_bios.bin
+          : > variants/boktai1_usa/generated/recompiled_ci_decoy.cpp
+          tools/package_builder_flatpak.sh --generate-only
+
+      - name: Validate builder Flatpak structure and exclusions
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import yaml
+          m = yaml.safe_load(open('flatpak-build/tech.recomp.BoktaiBuilder.yml'))
+          assert m['runtime'] == 'org.freedesktop.Sdk', m['runtime']
+          assert m['runtime-version'] == '23.08', m['runtime-version']
+          assert m['sdk'] == 'org.freedesktop.Sdk', m['sdk']
+          mod = next(x for x in m['modules'] if x['name'] == 'BoktaiBuilder')
+          assert '-DGBAGAME_BUILDER_ONLY=ON' in mod['config-opts']
+          commands = '\n'.join(mod['post-install'])
+          assert '/app/bin/sources' in commands and 'tar -C ..' in commands
+          assert '/app/bin/sources/bin/gba_recompile' in commands
+          src = next(s for s in mod['sources'] if s.get('type') == 'dir')
+          skip = set(src.get('skip', []))
+          expected = {
+              'variants/boktai1_usa/roms/ci-decoy.gba',
+              'gbarecomp/bios/gba_bios.bin',
+              'variants/boktai1_usa/generated',
+              'variants/boktai1_usa/generated/recompiled_ci_decoy.cpp',
+          }
+          assert expected <= skip, expected - skip
+          print('builder Flatpak manifest structure and decoy exclusions OK')
+          "
