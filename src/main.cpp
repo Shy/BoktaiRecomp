@@ -69,8 +69,13 @@ void print_usage() {
         "Solar sensor (the Gun del Sol charges from real sunlight):\n"
         "  --solar-zip <code>      poll this postal code's live irradiance\n"
         "  --solar-country <cc>    country for the code (default us)\n"
-        "  --solar-full-sun <wm2>  W/m^2 that fills the gauge (default 900;\n"
+        "  --solar-full-sun <wm2>  W/m^2 that fills the gauge (default 850;\n"
         "                          lower it at high latitude or in winter)\n"
+        "  --solar-diffuse-weight <f>  how much diffuse skylight counts vs\n"
+        "                          direct sun (default 0.10). The gauge tracks\n"
+        "                          sun, not sky brightness, so dense overcast\n"
+        "                          reads near zero; 1.0 counts bright cloud as\n"
+        "                          sunshine the way plain GHI used to\n"
         "  --solar-poll <seconds>  interval between polls (default 600)\n"
         "  --solar-verbose         log every reading\n"
         "Each has a BOKTAI_SOLAR_* environment equivalent (ZIP, COUNTRY,\n"
@@ -78,6 +83,14 @@ void print_usage() {
         "is ever made. To set light by hand instead, bind SolarBrighter /\n"
         "SolarDimmer / SolarLive in the launcher's Hotkeys panel -- they are\n"
         "unbound by default -- or use the in-game menu (Esc).\n"
+        "\n"
+        "Presentation:\n"
+        "  --touch-ui              near-full-screen panels and larger hit\n"
+        "                         targets, for a handheld touchscreen such as a\n"
+        "                         Steam Deck (BOKTAI_TOUCH_UI=1); --no-touch-ui\n"
+        "                         forces the desktop presentation back on\n"
+        "A sharp scaler (integer prescale + linear finish) is offered as a\n"
+        "toggle in the launcher's Video panel; it is off by default.\n"
         "\n"
         "Default game config: " GBARECOMP_DEFAULT_GAME_CONFIG " (relative to CWD)\n",
         GBARECOMP_WINDOW_TITLE);
@@ -90,12 +103,22 @@ const char* env_or(const char* name, const char* fallback) {
 
 // Pulls the --solar-* flags out of argv so the runtime's own parser never sees
 // them, and returns the resulting config. CLI wins over environment.
-boktai::SolarWeatherConfig take_solar_args(std::vector<std::string>& args) {
+// Also takes --touch-ui / --no-touch-ui, which are game-owned like the solar
+// flags: the engine has no CLI switch for RunOptions::ui_touch_friendly, and an
+// unrecognised flag reaching the runtime's parser is an error.
+boktai::SolarWeatherConfig take_solar_args(std::vector<std::string>& args,
+                                           bool* touch_ui) {
     boktai::SolarWeatherConfig cfg;
+    if (const char* v = std::getenv("BOKTAI_TOUCH_UI")) {
+        *touch_ui = v[0] && v[0] != '0';
+    }
     cfg.zipcode = env_or("BOKTAI_SOLAR_ZIP", "");
     cfg.country = env_or("BOKTAI_SOLAR_COUNTRY", "us");
     if (const char* v = std::getenv("BOKTAI_SOLAR_FULL_SUN")) {
         if (v[0]) cfg.full_sun_irradiance = std::strtod(v, nullptr);
+    }
+    if (const char* v = std::getenv("BOKTAI_SOLAR_DIFFUSE_WEIGHT")) {
+        if (v[0]) cfg.diffuse_weight = std::strtod(v, nullptr);
     }
     if (const char* v = std::getenv("BOKTAI_SOLAR_POLL")) {
         if (v[0]) cfg.poll_seconds = static_cast<unsigned>(std::strtoul(v, nullptr, 10));
@@ -128,8 +151,15 @@ boktai::SolarWeatherConfig take_solar_args(std::vector<std::string>& args) {
         } else if (a == "--solar-poll") {
             if (const char* v = value("--solar-poll"))
                 cfg.poll_seconds = static_cast<unsigned>(std::strtoul(v, nullptr, 10));
+        } else if (a == "--solar-diffuse-weight") {
+            if (const char* v = value("--solar-diffuse-weight"))
+                cfg.diffuse_weight = std::strtod(v, nullptr);
         } else if (a == "--solar-verbose") {
             cfg.verbose = true;
+        } else if (a == "--touch-ui") {
+            *touch_ui = true;
+        } else if (a == "--no-touch-ui") {
+            *touch_ui = false;
         } else {
             kept.push_back(a);
         }
@@ -152,7 +182,8 @@ int main(int argc, char** argv) {
 
     // Strip the --solar-* flags before the runtime's parser sees them.
     std::vector<std::string> args(argv, argv + argc);
-    const boktai::SolarWeatherConfig solar_cfg = take_solar_args(args);
+    bool touch_ui = false;
+    const boktai::SolarWeatherConfig solar_cfg = take_solar_args(args, &touch_ui);
 
     // config.ini lives next to the executable, the same file the launcher seam
     // and host_window read, so [Solar] persists alongside [Launcher]/[KeyMap].
@@ -186,6 +217,35 @@ int main(int argc, char** argv) {
     // making the player set GBARECOMP_SOLAR. Light itself is game policy.
     opts.has_solar_sensor = true;
     opts.solar_provider   = &boktai::solar_weather_brightness;
+
+    // ─────────────────────────────────────────────────────────────────
+    // Sharp scaler — integer prescale, then a linear finish.
+    //
+    // Worth exposing because the GBA's 240x160 does not scale evenly to a
+    // 16:10 handheld: on a Steam Deck's 1280x800, 800/160 is exactly 5 but
+    // 1280/240 is 5.33, so a pure integer scale must letterbox or crop. The
+    // sharp scaler prescales by the integer factor and only interpolates the
+    // fractional remainder, which keeps pixel edges crisp instead of blurring
+    // the whole image the way a plain linear stretch does. This is the
+    // tractable form of the 16:10 work that got cut.
+    //
+    // Exposed as a launcher toggle but defaulted OFF: nearest is the look this
+    // game has shipped with, and an engine update should not silently change
+    // how anyone's game renders. One click in Video turns it on.
+    //
+    // NOT exposing launcher_*_affine_filter: that path is gated on
+    // g_ws_affine_filter_enabled in the expanded-render code, and Boktai
+    // renders the stock 240x160 (widescreen_supported stays 0), so the toggle
+    // would do nothing at all.
+    opts.launcher_expose_sharp_filter  = true;
+    opts.launcher_default_sharp_filter = false;
+
+    // Touch presentation: near-full-screen panels and larger hit targets. The
+    // Deck has a touchscreen and this is the first thing here to use it, but it
+    // is wrong on a desktop, so it is opt-in per launch rather than hardcoded —
+    // one source tree serves both. RunOptions is filled before SDL starts, so
+    // the screen cannot be measured here to decide automatically.
+    opts.ui_touch_friendly = touch_ui;
 
     boktai::game_ui_install(opts);   // solar section in the in-game menu
 
