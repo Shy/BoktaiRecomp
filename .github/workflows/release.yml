@@ -54,10 +54,21 @@ jobs:
           submodules: recursive
       - name: Install Flatpak builder and runtime
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
+          # Ubuntu 24.04 restricts unprivileged user namespaces through
+          # AppArmor, and flatpak-builder sandboxes every build command with
+          # bwrap, which needs them -- otherwise the build dies with
+          # "bwrap: Creating new namespace failed: Operation not permitted".
+          # Harmless on a throwaway runner; do not copy this onto a real machine.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
+          # The runtime IS the toolchain the builder compiles the game with, so
+          # this is a ~1.5 GB download rather than a small base image.
           flatpak install -y --user flathub org.freedesktop.Sdk//23.08
       - name: Build the builder Flatpak
         run: tools/package_builder_flatpak.sh
