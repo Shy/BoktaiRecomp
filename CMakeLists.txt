@@ -101,6 +101,22 @@ else()
         "the solar sensor falls back to the number-row debug keys.")
 endif()
 
+# ─────────────────────────────────────────────────────────────────────
+# The builder (tools/builder/) — what a player actually downloads.
+#
+# A recompiled binary is translated cartridge code and cannot be distributed,
+# so this repository ships the machinery that PRODUCES one instead: a ROM-free
+# app that compiles the game on the player's own machine from their own dump,
+# then execs it on every launch after that. See docs/BUILDER.md.
+#
+# It carries no generated sources, so it configures and links with no ROM
+# present — which is what makes an automated release possible at all.
+# GBAGAME_BUILDER_ONLY skips the game target entirely for exactly that case.
+# ─────────────────────────────────────────────────────────────────────
+option(GBAGAME_BUILDER "Build the first-run builder app" ON)
+option(GBAGAME_BUILDER_ONLY
+       "Build ONLY the builder — skip the game target (no ROM needed)" OFF)
+
 add_executable(verify_rom_hash tools/verify_rom_hash/main.cpp)
 target_include_directories(verify_rom_hash PRIVATE "${GBARECOMP_ROOT}/src/gba")
 target_link_libraries(verify_rom_hash PRIVATE gbarecomp_gba)
@@ -201,6 +217,76 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
 endfunction()
 
 # Boktai 1 — USA, sha1 71643262… (verified clean dump)
-add_gba_variant(BoktaiRecomp boktai1_usa 19893 "BoktaiRecomp"
-    "Boktai - The Sun Is in Your Hand (USA)"
-    "7164326283df46a3941ec7b6ceca889cbc40e660" 0xE715AC45)
+if(NOT GBAGAME_BUILDER_ONLY)
+    add_gba_variant(BoktaiRecomp boktai1_usa 19893 "BoktaiRecomp"
+        "Boktai - The Sun Is in Your Hand (USA)"
+        "7164326283df46a3941ec7b6ceca889cbc40e660" 0xE715AC45)
+endif()
+
+if(GBAGAME_BUILDER)
+    if(NOT GBAGAME_RECOMP_UI)
+        message(FATAL_ERROR
+            "GBAGAME_BUILDER needs GBAGAME_RECOMP_UI=ON: the builder's window, "
+            "its file pickers and its SHA-1 all come from recomp-ui.")
+    endif()
+
+    # SDL2 is the host's to provide (recomp_target_launcher_ui contributes
+    # OpenGL but deliberately not SDL, whose provenance varies). Config mode
+    # covers Homebrew and Debian; the find_path/find_library pair covers MSYS2
+    # and anything hand-installed.
+    find_package(SDL2 QUIET)
+    if(TARGET SDL2::SDL2)
+        set(BUILDER_SDL2_LIBS SDL2::SDL2)
+        set(BUILDER_SDL2_INCLUDES "")
+    else()
+        find_path(BUILDER_SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2)
+        find_library(BUILDER_SDL2_LIBRARY NAMES SDL2 SDL2-2.0)
+        if(NOT BUILDER_SDL2_INCLUDE_DIR OR NOT BUILDER_SDL2_LIBRARY)
+            message(FATAL_ERROR
+                "GBAGAME_BUILDER=ON but SDL2 was not found. Install it "
+                "(brew install sdl2 / apt install libsdl2-dev / pacman -S "
+                "mingw-w64-x86_64-SDL2) or configure with "
+                "-DGBAGAME_BUILDER=OFF.")
+        endif()
+        set(BUILDER_SDL2_LIBS "${BUILDER_SDL2_LIBRARY}")
+        set(BUILDER_SDL2_INCLUDES "${BUILDER_SDL2_INCLUDE_DIR}")
+    endif()
+
+    add_executable(BoktaiBuilder
+        tools/builder/builder_main.cpp
+        tools/builder/builder_core.cpp)
+    target_include_directories(BoktaiBuilder PRIVATE
+        tools/builder ${BUILDER_SDL2_INCLUDES})
+    target_link_libraries(BoktaiBuilder PRIVATE ${BUILDER_SDL2_LIBS})
+    find_package(Threads REQUIRED)
+    target_link_libraries(BoktaiBuilder PRIVATE Threads::Threads)
+
+    # Brings recomp-ui's sources, the vendored Dear ImGui, tinyfiledialogs (the
+    # native file pickers), sha1.c (the asset fingerprints) and OpenGL. CONSOLE
+    # gba also stages the launcher assets next to the exe, which the builder's
+    # own window does not use — it draws with ImGui's built-in font so a missing
+    # assets/ directory can never block a player from building — but the GAME it
+    # produces does.
+    recomp_target_launcher_ui(BoktaiBuilder CONSOLE gba)
+
+    # tools/builder/*.cpp include "sha1.h" and "third_party/tinyfiledialogs.h"
+    # by those names; recomp_target_launcher_ui already puts src/ and
+    # src/common/ on the include path, so nothing further is needed here.
+    # The builder's two pure pieces, tested without a window, a ROM or a
+    # compiler. Links sha1.c directly rather than going through
+    # recomp_target_launcher_ui: a test does not need the launcher, ImGui or
+    # staged assets.
+    add_executable(test_builder_core
+        tools/builder/test_builder_core.cpp
+        tools/builder/builder_core.cpp
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common/sha1.c")
+    target_include_directories(test_builder_core PRIVATE
+        tools/builder
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src"
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common")
+    target_link_libraries(test_builder_core PRIVATE Threads::Threads)
+    enable_testing()
+    add_test(NAME builder_core COMMAND test_builder_core)
+
+    message(STATUS "BoktaiRecomp: builder app enabled (target BoktaiBuilder)")
+endif()
