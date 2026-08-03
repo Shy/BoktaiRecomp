@@ -28,28 +28,33 @@ SIGKILLed at launch because the launcher needs `assets/` inside `Contents/MacOS`
 where `codesign` treats it as unsigned code. The reasoning is in the
 `gbarecomp/packaging` README.
 
-## Steam Deck
+## Steam Deck builder
 
-In **Desktop Mode**:
+Players download `BoktaiBuilder.flatpak`; they do not clone this repository or
+install `flatpak-builder`. In **Desktop Mode**:
 
 ```bash
-flatpak install -y flathub org.flatpak.Builder
-flatpak install -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
-
-gbarecomp/packaging/flatpak/build_flatpak.sh --target BoktaiRecomp \
-    --name Boktai --id tech.recomp.BoktaiRecomp \
-    --summary "Boktai: The Sun Is in Your Hand, recompiled"
+flatpak install --user ~/Downloads/BoktaiBuilder.flatpak
+flatpak run tech.recomp.BoktaiBuilder
 ```
 
-Then `flatpak run tech.recomp.BoktaiRecomp`, and to reach it from Gaming Mode:
-Steam → Games → Add a Non-Steam Game.
+On first launch, choose a legally dumped Boktai ROM and GBA BIOS. The builder
+copies its bundled clean source tree to writable per-user storage, runs the
+bundled `gba_recompile`, and compiles the game using `org.freedesktop.Sdk 23.08`.
+The shared SDK runtime supplies C++, CMake and Ninja without changing SteamOS's
+immutable root. Add “BoktaiBuilder” through Steam → Games → Add a Non-Steam Game
+to launch it in Gaming Mode.
 
-Flatpak is the right target for SteamOS because its root filesystem is immutable —
-the runtime supplies SDL2, so nothing is installed into the OS.
+Maintainers build the distributable bundle on Linux with:
 
-> **Untested.** The manifest generation is verified, but the Flatpak build itself
-> has never been run — there was no Linux or Deck host available. Expect to fix
-> something on first attempt.
+```bash
+tools/package_builder_flatpak.sh
+```
+
+This writes `flatpak-build/BoktaiBuilder.flatpak`. Use `--generate-only` to
+regenerate and validate the manifest/support files without running Flatpak.
+Manifest generation is verified in CI; a complete first-launch build on real
+Steam Deck hardware remains unverified.
 
 The manifest requests `--share=network` for the weather-driven sensor. Drop that
 line if you only ever use the manual hotkeys.
@@ -63,36 +68,17 @@ it pins `libSDL2.a` from the MinGW prefix.
 
 ## Automated builds
 
-`.github/workflows/release.yml` builds macOS and Linux packages and opens a
-**draft** GitHub Release.
-
-It cannot work from a clean clone, and that is not a bug: `variants/*/generated/`
-is derived from a copyrighted cartridge and is never committed, and a GitHub
-runner has no ROM. So the workflow fetches one from somewhere you control:
-
-| Secret | Purpose |
-|---|---|
-| `ROM_URL` | private URL for the cartridge dump |
-| `ROM_SHA1` | expected sha1, verified before anything is built |
-| `BIOS_URL` | private URL for the GBA BIOS |
-| `BIOS_SHA1` | expected sha1 |
-
-With `ROM_URL` unset the build jobs **skip** with an explanatory notice instead of
-failing, so a fork does not inherit a permanently red workflow it cannot fix.
+`.github/workflows/release.yml` builds only the ROM-free builder: macOS and Linux
+tarballs plus `BoktaiBuilder.flatpak`. It needs no ROM/BIOS secrets and opens a
+**draft** GitHub Release after both builder jobs succeed.
 
 Triggered by pushing a `v*` tag, or manually via *Actions → Release → Run
 workflow*.
 
-Each job recompiles the BIOS and the cartridge, packages with the scripts above,
-then proves the artifact is real before uploading it:
-
-- runs the packaged binary for 60 frames against the ROM and asserts `rom_loaded`
-  and `ppu_frames=60` — a `--help` smoke test alone would not catch a package that
-  starts but cannot boot;
-- fails the job if any `*.gba` or `gba_bios.bin` ended up inside the artifact.
-
-The Release is created as a **draft** deliberately. The binaries embed translated
-ROM code, so publishing them is a decision, not a side effect of a green build.
+The packaging scripts exclude ROMs, BIOS files, generated translations, VCS data
+and build output. The Flatpak build exports to a dedicated repository before
+creating the single-file bundle. The Release remains a draft so its assets and
+instructions can be reviewed before publication.
 
 Windows is not in the matrix yet: its packaging path is MSYS2-specific
 (`GBARECOMP_STATIC_RELEASE` pins `libSDL2.a` from the MinGW prefix), so it needs a
